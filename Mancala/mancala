@@ -1,0 +1,384 @@
+#mancala.s
+
+.data
+#need 6 pits, 6 seeds, and 2 stores
+pits: .word 4, 4, 4, 4, 4, 4, 0, 4, 4, 4, 4, 4, 4, 0
+#in the array let 0-5 = player 1's pits, 6 = player 1's store, 7-12 = player 2's pits, 13 = player 2's store
+
+newline:	.asciiz "\n"
+space:		.asciiz " "
+line1: 		.asciiz " _________________________________________________________________________"
+line2:		.asciiz "|  _____     _____    _____    _____    _____    _____    _____           |"
+pit_layer2: 	.asciiz "| |     |   [__4__]  [__4__]  [__4__]  [__4__]  [__4__]  [__4__]   _____  |"
+player2_store: 	.asciiz "| |  0  |                                                         |     | |"
+player1_store: 	.asciiz "| |_____|   _____    _____    _____    _____    _____    _____    |  0  | |"
+pit_layer1: 	.asciiz "|          [__4__]  [__4__]  [__4__]  [__4__]  [__4__]  [__4__]   |_____| |"
+line7: 		.asciiz "|_________________________________________________________________________|"
+
+player1_turn:	.asciiz "[Player 1] Please choose a pit (0-5): "
+player2_turn:	.asciiz "[Player 2] Please choose a pit (7-12): "
+
+player1_wins:	.asciiz "Player 1 wins!"
+player2_wins:	.asciiz "Player 2 wins!"
+tie:		.asciiz "It's a tie!"
+
+not_your_reg:	.asciiz "[ERROR] The pit you chose is not your pit!"
+is_empty:	.asciiz "[ERROR] The pit you chose is empty!"
+
+
+
+
+#$s0 = base address of array
+#$s1 = offest for array
+#$s2 = total address for array
+#$s3 = current number of stones to move
+#$s4 = players pit choice
+#$s5 = byte from string
+#$s6 = 
+#$s7 = 
+.text
+
+main:	#load addresses
+	la $s0, pits
+
+rules:	#print the rules of the game to the console
+	jal print_board
+
+player_phase:	#main phase, calls other necessary functions
+
+player_1_turn:
+	li $v0, 4	
+	la $a0, newline
+	syscall
+
+	li $v0, 4	
+	la $a0, player1_turn
+	syscall
+	
+	li $v0, 5               
+        syscall
+        move $s4, $v0
+        
+        jal check_available_1
+        
+        jal sow_seed	#sow the seeds
+        jal print_array
+        jal check_victory
+        
+
+        li $s4, 0	#set user input back to 0
+player_2_turn:
+        li $v0, 4	
+	la $a0, newline
+	syscall
+        
+        li $v0, 4	
+	la $a0, player2_turn
+	syscall
+	
+	li $v0, 5               
+        syscall
+        move $s4, $v0
+        
+        jal check_available_2
+        
+        jal sow_seed	#sow the seeds
+        jal print_array
+        jal check_victory
+        #jal update_board
+        
+        j player_phase
+
+end:
+	li $v0, 10		# end of program
+	syscall	
+	
+	
+
+sow_seed:	#sows the seeds in the pits
+	la $s0, pits
+	li $s2, 0
+
+	mul $s1, $s4, 4		#multiply current location by 4
+	add $s2, $s1, $s0	#add location * 4 and base address
+	lw $t0, 0($s2)		#intialize index
+	sw $zero, 0($s2)
+	
+	beqz $t0, after_loop
+	
+sow_seed_loop: #NEED TO CREATE A CIRCULAR ARRAY
+	addi $s4, $s4, 1	#increment current location in array
+	rem $s4, $s4, 14	#find position in circular array
+	mul $s1, $s4, 4		#multiply current location by 4
+	add $s2, $s1, $s0	#add location * 4 and base address
+	
+	
+	lw $t1, 0($s2)		# get new value
+	addi $t1, $t1, 1	#increment that value
+	sw $t1, 0($s2)		#store that value
+	addi $t0, $t0, -1	#decrement index
+	bgtz $t0, sow_seed_loop
+	
+after_loop:
+	jr $ra			# return
+	
+	
+	
+	
+
+
+check_victory:	#SOME ARCHAIC SHIT YOU NEED TO COMMENT PROPERLY
+	li $s4, 0
+	
+player_one_empty_loop:
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0			#^^^ computes total address
+	lw $t1, 0($s2)		
+	bgtz $t1, player_two_check		#load the number of seeds at that index and see if its greater than 0
+	addi $s4, $s4, 1
+	blt $s4, 6, player_one_empty_loop	#increment index and branch if needed
+	
+	li $t3, 0				#if loop executes without exiting prepare to empty player two's pits
+	li $s4, 7				#7 is the the location of player two's first pit
+	
+empty_player_two:
+
+	mul $s1, $s4, 4				
+	add $s2, $s1, $s0			#^^^ computes total address
+	lw $t4, 0($s2)				
+	add $t3, $t3, $t4	
+	sw $zero, 0($s2)			#^^^load the current number of seeds, add it to the total, and save a zero at that same location	
+	addi $s4, $s4, 1
+	blt $s4, 13, empty_player_two		#increment index and branch if needed
+	
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0			#^^^ computes total address (13 is the location of the player two's nest)
+	lw $t5, 0($s2)	
+	add $t5, $t5, $t3
+	sw $t5, 0($s2)				#^^^load the current sum of stones and add it to the stones taken from the pits, take that sum and save it to the nest
+	
+	j compare_scores
+	
+player_two_check:
+	li $s4, 7
+	
+player_two_empty_loop:
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0			#^^^ computes total address
+	lw $t1, 0($s2)				
+	bgtz $t1, neither			#load the number of seeds at that index and see if its greater than 0
+	addi $s4, $s4, 1	
+	blt $s4, 13, player_two_empty_loop	#increment index and branch if needed
+	
+	li $t3, 0				#if loop executes without exiting prepare to empty player two's pits
+	li $s4, 0				#0 is the the location of player one's first pit
+	
+empty_player_one:
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0			#^^^ computes total address
+	lw $t4, 0($s2)
+	add $t3, $t3, $t4
+	sw $zero, 0($s2)			#^^^load the current number of seeds, add it to the total, and save a zero at that same location
+	addi $s4, $s4, 1	
+	blt $s4, 6, empty_player_one		#increment index and branch if needed
+
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0			#^^^ computes total address (13 is the location of the player two's nest)
+	lw $t5, 0($s2)
+	add $t5, $t5, $t3
+	sw $t5, 0($s2)				#^^^load the current sum of stones and add it to the stones taken from the pits, take that sum and save it to the nest
+	
+	j compare_scores
+	
+neither:
+	jr $ra
+		
+compare_scores: 
+	li $s4, 6
+	
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0	
+	lw $t4, 0($s2)
+	
+	li $s4, 13
+
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0	
+	lw $t5, 0($s2)
+	
+	bgt $t4, $t5, player_one_wins
+	blt $t4, $t5, player_two_wins
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+
+	li $v0, 4	
+	la $a0, tie
+	syscall
+	
+	j end
+	
+player_one_wins:
+	li $v0, 4	
+	la $a0, newline
+	syscall
+
+	li $v0, 4	
+	la $a0, player1_wins
+	syscall
+	
+	j end
+
+player_two_wins:
+	li $v0, 4	
+	la $a0, newline
+	syscall
+
+	li $v0, 4	
+	la $a0, player2_wins
+	syscall
+	
+	j end
+
+edit_string:
+
+print_board:	#prints the board
+	li $v0, 4	
+	la $a0, newline
+	syscall
+
+	li $v0, 4	
+	la $a0, line1
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	li $v0, 4	
+	la $a0, line2
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	li $v0, 4	
+	la $a0, pit_layer2
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	li $v0, 4	
+	la $a0, player2_store
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	li $v0, 4	
+	la $a0, player1_store
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	li $v0, 4	
+	la $a0, pit_layer1
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	li $v0, 4	
+	la $a0, line7
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	jr $ra
+	
+print_array:
+	li $t2, 0
+	la $s0, pits
+	li $s2, 0
+	li $s1, 0
+loop:
+	mul $s1, $t2, 4		#multiply current location by 4
+	add $s2, $s1, $s0	#add location * 4 and base address
+	lw $t3, 0($s2)
+	
+	li $v0, 1	
+	move $a0, $t3
+	syscall
+	
+	li $v0, 4	
+	la $a0, space
+	syscall
+	
+	addi $t2, $t2, 1
+	
+	ble $t2, 13, loop
+	
+	jr $ra
+	
+check_available_1:
+	move $s6, $ra
+	bge $s4, 6, not_available
+	blt $s4, 0, not_available
+	
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0
+	
+	lw $t3, 0($s2)
+	
+	beqz $t3, is_zero
+	
+	jr $ra
+	
+check_available_2:
+	move $s6, $ra
+	bge $s4, 13, not_available
+	blt $s4, 7, not_available
+	
+	mul $s1, $s4, 4
+	add $s2, $s1, $s0
+	
+	lw $t3, 0($s2)
+	
+	beqz $t3, is_zero
+	
+	jr $ra
+	
+not_available:
+	li $v0, 4	
+	la $a0, not_your_reg
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	addi $s6, $s6, -40
+	jr $s6
+
+is_zero:
+	
+	li $v0, 4	
+	la $a0, is_empty
+	syscall
+	
+	li $v0, 4	
+	la $a0, newline
+	syscall
+	
+	addi $s6, $s6, -40
+	jr $s6
